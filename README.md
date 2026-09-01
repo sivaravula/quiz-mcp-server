@@ -152,6 +152,7 @@ No separate registration step — `register(mcp)` is called for both the stdio a
 
 ## Security
 
+- `register_user` requires an `access_code` argument checked (constant-time) against `QUIZ_ACCESS_CODE` in `.env`. This is the only gate on the public endpoint — share the code out-of-band with participants and rotate it by changing `.env` (and redeploying) if it leaks.
 - `.env` is gitignored — never commit it.
 - Tools never return raw SQL or expose the DB schema.
 - All queries use parameterized SQL (`text("... WHERE id = :id")`, not string interpolation).

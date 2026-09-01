@@ -1,4 +1,5 @@
 import config                    # MUST be first if using DB
+import hmac
 import uuid
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
@@ -70,17 +71,23 @@ def register(mcp: FastMCP) -> None:
     """Register all tools in this file onto the given FastMCP instance."""
 
     @mcp.tool()
-    def register_user(name: str, unique_id: str) -> dict:
+    def register_user(name: str, unique_id: str, access_code: str) -> dict:
         """
-        Register a new user for the quiz, or resume an existing one. If unique_id
-        already belongs to a registered user, this returns their info and their
-        next unanswered question instead of erroring — always call this at the
-        start of a session and use whatever it returns.
+        Register a new user for the quiz, or resume an existing one. Requires the
+        access_code the admin shared with participants — ask the user for it and
+        pass it here before anything else; do not reveal what the correct code is.
+        If unique_id already belongs to a registered user, this returns their info
+        and their next unanswered question instead of erroring — always call this
+        at the start of a session and use whatever it returns.
 
         Args:
             name: The user's full name.
             unique_id: A unique id chosen by the user, at least 4 characters.
+            access_code: The quiz access code provided by the admin.
         """
+        if not hmac.compare_digest((access_code or "").strip(), config.QUIZ_ACCESS_CODE):
+            return {"error": "Invalid access code."}
+
         unique_id = unique_id.strip()
         if len(unique_id) < 4:
             return {"error": "unique_id must be at least 4 characters."}
