@@ -16,8 +16,10 @@ DB_PORT     = os.environ.get("DB_PORT", "3306")
 QUIZ_ACCESS_CODE = os.environ["QUIZ_ACCESS_CODE"]
 
 # Separate, admin-only code required by add_question so random participants
-# can't add/modify quiz content through the public endpoint.
-QUIZ_ADMIN_CODE = os.environ["QUIZ_ADMIN_CODE"]
+# can't add/modify quiz content through the public endpoint. Optional: if
+# unset, add_question just reports itself as unconfigured instead of
+# crashing the whole server on startup.
+QUIZ_ADMIN_CODE = os.environ.get("QUIZ_ADMIN_CODE")
 
 from sqlalchemy import create_engine
 

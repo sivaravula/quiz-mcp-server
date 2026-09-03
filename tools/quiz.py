@@ -236,6 +236,8 @@ def register(mcp: FastMCP) -> None:
             question_number: Optional explicit question number; must be unused.
             reference_link: Optional URL to a reference document for this question.
         """
+        if not config.QUIZ_ADMIN_CODE:
+            return {"error": "add_question is not configured on this server (QUIZ_ADMIN_CODE is unset)."}
         if not hmac.compare_digest((admin_code or "").strip(), config.QUIZ_ADMIN_CODE):
             return {"error": "Invalid admin code."}
 
