@@ -210,6 +210,80 @@ def register(mcp: FastMCP) -> None:
         }
 
     @mcp.tool()
+    def add_question(
+        question: str,
+        answer: str,
+        points: int,
+        admin_code: str,
+        question_number: int | None = None,
+        reference_link: str | None = None,
+    ) -> dict:
+        """
+        Add a new question to the quiz. Requires admin_code (a separate secret
+        from the participant access_code) — never guess, reveal, or hint at it.
+        This is a content-management tool for whoever is setting up the quiz,
+        not part of the participant flow.
+
+        If question_number is omitted, the next available number (current max
+        + 1) is assigned automatically. If given explicitly, it must not
+        already be in use.
+
+        Args:
+            question: The question text shown to participants.
+            answer: The correct answer, matched case-insensitively on submission.
+            points: Points awarded for a correct answer. Must be positive.
+            admin_code: The admin code required to manage quiz content.
+            question_number: Optional explicit question number; must be unused.
+            reference_link: Optional URL to a reference document for this question.
+        """
+        if not hmac.compare_digest((admin_code or "").strip(), config.QUIZ_ADMIN_CODE):
+            return {"error": "Invalid admin code."}
+
+        question = question.strip()
+        answer = answer.strip()
+        if not question:
+            return {"error": "question must not be empty."}
+        if not answer:
+            return {"error": "answer must not be empty."}
+        if points <= 0:
+            return {"error": "points must be a positive integer."}
+        if question_number is not None and question_number <= 0:
+            return {"error": "question_number must be a positive integer."}
+
+        with config.engine.begin() as conn:
+            if question_number is None:
+                row = conn.execute(
+                    text("SELECT COALESCE(MAX(question_number), 0) + 1 AS qn FROM questions")
+                ).fetchone()
+                question_number = row.qn
+            else:
+                existing = conn.execute(
+                    text("SELECT 1 FROM questions WHERE question_number = :qn"),
+                    {"qn": question_number},
+                ).fetchone()
+                if existing:
+                    return {"error": f"Question number {question_number} already exists."}
+
+            conn.execute(
+                text(
+                    "INSERT INTO questions (question_number, question, answer, points, reference_link) "
+                    "VALUES (:qn, :question, :answer, :points, :reference_link)"
+                ),
+                {
+                    "qn": question_number,
+                    "question": question,
+                    "answer": answer,
+                    "points": points,
+                    "reference_link": reference_link,
+                },
+            )
+
+        return {
+            "message": f"Question {question_number} added successfully.",
+            "question_number": question_number,
+        }
+
+    @mcp.tool()
     def generate_leaderboard() -> dict:
         """
         Get the current quiz leaderboard, ranked by total points.

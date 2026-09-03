@@ -79,8 +79,8 @@ Use absolute paths matching wherever you cloned the repo.
 It only reloads MCP config on a full restart.
 
 Then verify it loaded: **Settings → Connectors** → `quizapp` should be listed under "Other
-tools" with 5 tools (Register user, Get question, Validate answer, Generate leaderboard, Review
-answers).
+tools" with 6 tools (Register user, Get question, Validate answer, Add question, Generate
+leaderboard, Review answers).
 
 ### Playing the quiz
 
@@ -107,6 +107,8 @@ question at a time, waiting for your answer before moving on.
    | `DB_USER`   | your DB user   |
    | `DB_PASSWORD` | your DB password |
    | `DB_NAME`   | your DB name   |
+   | `QUIZ_ACCESS_CODE` | code shared with participants |
+   | `QUIZ_ADMIN_CODE` | code kept by whoever manages quiz content |
 
 4. Start command: `python server.py`
 5. In `server.py`, update `BASE_URL` under the `RENDER` branch to your actual Render URL.
@@ -152,7 +154,8 @@ No separate registration step — `register(mcp)` is called for both the stdio a
 
 ## Security
 
-- `register_user` requires an `access_code` argument checked (constant-time) against `QUIZ_ACCESS_CODE` in `.env`. This is the only gate on the public endpoint — share the code out-of-band with participants and rotate it by changing `.env` (and redeploying) if it leaks.
+- `register_user` requires an `access_code` argument checked (constant-time) against `QUIZ_ACCESS_CODE` in `.env`. This is the only gate on the public endpoint for participants — share the code out-of-band with them and rotate it by changing `.env` (and redeploying) if it leaks.
+- `add_question` requires a separate `admin_code` argument checked (constant-time) against `QUIZ_ADMIN_CODE` in `.env`. Keep this code to yourself — anyone who has it can insert questions into the live quiz. Rotate it the same way as `QUIZ_ACCESS_CODE` if it leaks.
 - `.env` is gitignored — never commit it.
 - Tools never return raw SQL or expose the DB schema.
 - All queries use parameterized SQL (`text("... WHERE id = :id")`, not string interpolation).

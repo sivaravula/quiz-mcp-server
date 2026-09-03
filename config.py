@@ -15,6 +15,10 @@ DB_PORT     = os.environ.get("DB_PORT", "3306")
 # Access code participants must enter before register_user will accept them.
 QUIZ_ACCESS_CODE = os.environ["QUIZ_ACCESS_CODE"]
 
+# Separate, admin-only code required by add_question so random participants
+# can't add/modify quiz content through the public endpoint.
+QUIZ_ADMIN_CODE = os.environ["QUIZ_ADMIN_CODE"]
+
 from sqlalchemy import create_engine
 
 engine = create_engine(
