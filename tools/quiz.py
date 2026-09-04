@@ -6,43 +6,78 @@ from sqlalchemy.exc import IntegrityError
 from mcp.server.fastmcp import FastMCP
 
 
+_QUIZ_ID_CACHE = None
+
+
+def _quiz_id():
+    """Resolve config.QUIZ_CODE to its quizzes.id, caching the lookup."""
+    global _QUIZ_ID_CACHE
+    if _QUIZ_ID_CACHE is None:
+        with config.engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT id FROM quizzes WHERE quiz_code = :code"),
+                {"code": config.QUIZ_CODE},
+            ).fetchone()
+        if row is None:
+            raise RuntimeError(f"No quiz found with quiz_code '{config.QUIZ_CODE}'.")
+        _QUIZ_ID_CACHE = row.id
+    return _QUIZ_ID_CACHE
+
+
 def _next_question_number(after=None):
+    quiz_id = _quiz_id()
     with config.engine.connect() as conn:
         if after is None:
-            row = conn.execute(text("SELECT MIN(question_number) AS qn FROM questions")).fetchone()
+            row = conn.execute(
+                text("SELECT MIN(question_number) AS qn FROM questions WHERE quiz_id = :quiz_id"),
+                {"quiz_id": quiz_id},
+            ).fetchone()
         else:
             row = conn.execute(
-                text("SELECT MIN(question_number) AS qn FROM questions WHERE question_number > :after"),
-                {"after": after},
+                text(
+                    "SELECT MIN(question_number) AS qn FROM questions "
+                    "WHERE quiz_id = :quiz_id AND question_number > :after"
+                ),
+                {"quiz_id": quiz_id, "after": after},
             ).fetchone()
     return row.qn
 
 
 def _next_unanswered_question(user_id):
+    quiz_id = _quiz_id()
     with config.engine.connect() as conn:
         row = conn.execute(
             text("""
                 SELECT MIN(q.question_number) AS qn
                 FROM questions q
-                WHERE q.question_number NOT IN (
-                    SELECT question_number FROM attempts WHERE user_id = :uid
+                WHERE q.quiz_id = :quiz_id
+                AND q.question_number NOT IN (
+                    SELECT question_number FROM attempts WHERE user_id = :uid AND quiz_id = :quiz_id
                 )
             """),
-            {"uid": user_id},
+            {"uid": user_id, "quiz_id": quiz_id},
         ).fetchone()
     return row.qn
 
 
 def _total_questions():
+    quiz_id = _quiz_id()
     with config.engine.connect() as conn:
-        return conn.execute(text("SELECT COUNT(*) AS c FROM questions")).fetchone().c
+        return conn.execute(
+            text("SELECT COUNT(*) AS c FROM questions WHERE quiz_id = :quiz_id"),
+            {"quiz_id": quiz_id},
+        ).fetchone().c
 
 
 def _current_streak(user_id):
+    quiz_id = _quiz_id()
     with config.engine.connect() as conn:
         rows = conn.execute(
-            text("SELECT is_correct FROM attempts WHERE user_id = :uid ORDER BY question_number"),
-            {"uid": user_id},
+            text(
+                "SELECT is_correct FROM attempts WHERE user_id = :uid AND quiz_id = :quiz_id "
+                "ORDER BY question_number"
+            ),
+            {"uid": user_id, "quiz_id": quiz_id},
         ).fetchall()
     streak = 0
     for r in reversed(rows):
@@ -53,14 +88,16 @@ def _current_streak(user_id):
 
 
 def _leaderboard():
+    quiz_id = _quiz_id()
     with config.engine.connect() as conn:
         rows = conn.execute(text("""
             SELECT u.full_name, COALESCE(SUM(a.points_earned), 0) AS total_points
-            FROM users u
-            LEFT JOIN attempts a ON a.user_id = u.id
+            FROM attempts a
+            JOIN users u ON u.id = a.user_id
+            WHERE a.quiz_id = :quiz_id
             GROUP BY u.id, u.full_name
             ORDER BY total_points DESC
-        """)).fetchall()
+        """), {"quiz_id": quiz_id}).fetchall()
     return [
         {"rank": i + 1, "name": r.full_name, "points": r.total_points}
         for i, r in enumerate(rows)
@@ -135,8 +172,11 @@ def register(mcp: FastMCP) -> None:
         """
         with config.engine.connect() as conn:
             row = conn.execute(
-                text("SELECT question, points, reference_link FROM questions WHERE question_number = :qn"),
-                {"qn": question_number},
+                text(
+                    "SELECT question, points, reference_link FROM questions "
+                    "WHERE quiz_id = :quiz_id AND question_number = :qn"
+                ),
+                {"quiz_id": _quiz_id(), "qn": question_number},
             ).fetchone()
 
         if row is None:
@@ -163,6 +203,7 @@ def register(mcp: FastMCP) -> None:
             question_number: The question being answered.
             answer: The submitted answer.
         """
+        quiz_id = _quiz_id()
         with config.engine.begin() as conn:
             user = conn.execute(
                 text("SELECT id FROM users WHERE unique_id = :uid"),
@@ -172,17 +213,17 @@ def register(mcp: FastMCP) -> None:
                 return {"error": f"No user registered with unique_id '{unique_id}'."}
 
             question = conn.execute(
-                text("SELECT answer, points FROM questions WHERE question_number = :qn"),
-                {"qn": question_number},
+                text("SELECT answer, points FROM questions WHERE quiz_id = :quiz_id AND question_number = :qn"),
+                {"quiz_id": quiz_id, "qn": question_number},
             ).fetchone()
             if question is None:
                 return {"error": f"No question found with number {question_number}."}
 
             already_attempted = conn.execute(
                 text(
-                    "SELECT 1 FROM attempts WHERE user_id = :user_id AND question_number = :qn"
+                    "SELECT 1 FROM attempts WHERE user_id = :user_id AND quiz_id = :quiz_id AND question_number = :qn"
                 ),
-                {"user_id": user.id, "qn": question_number},
+                {"user_id": user.id, "quiz_id": quiz_id, "qn": question_number},
             ).fetchone()
             if already_attempted:
                 return {
@@ -195,10 +236,10 @@ def register(mcp: FastMCP) -> None:
 
             conn.execute(
                 text(
-                    "INSERT INTO attempts (user_id, question_number, submitted_answer, is_correct, points_earned) "
-                    "VALUES (:user_id, :qn, :answer, :is_correct, :points_earned)"
+                    "INSERT INTO attempts (user_id, quiz_id, question_number, submitted_answer, is_correct, points_earned) "
+                    "VALUES (:user_id, :quiz_id, :qn, :answer, :is_correct, :points_earned)"
                 ),
-                {"user_id": user.id, "qn": question_number, "answer": answer,
+                {"user_id": user.id, "quiz_id": quiz_id, "qn": question_number, "answer": answer,
                  "is_correct": is_correct, "points_earned": points_earned},
             )
 
@@ -252,26 +293,29 @@ def register(mcp: FastMCP) -> None:
         if question_number is not None and question_number <= 0:
             return {"error": "question_number must be a positive integer."}
 
+        quiz_id = _quiz_id()
         with config.engine.begin() as conn:
             if question_number is None:
                 row = conn.execute(
-                    text("SELECT COALESCE(MAX(question_number), 0) + 1 AS qn FROM questions")
+                    text("SELECT COALESCE(MAX(question_number), 0) + 1 AS qn FROM questions WHERE quiz_id = :quiz_id"),
+                    {"quiz_id": quiz_id},
                 ).fetchone()
                 question_number = row.qn
             else:
                 existing = conn.execute(
-                    text("SELECT 1 FROM questions WHERE question_number = :qn"),
-                    {"qn": question_number},
+                    text("SELECT 1 FROM questions WHERE quiz_id = :quiz_id AND question_number = :qn"),
+                    {"quiz_id": quiz_id, "qn": question_number},
                 ).fetchone()
                 if existing:
                     return {"error": f"Question number {question_number} already exists."}
 
             conn.execute(
                 text(
-                    "INSERT INTO questions (question_number, question, answer, points, reference_link) "
-                    "VALUES (:qn, :question, :answer, :points, :reference_link)"
+                    "INSERT INTO questions (quiz_id, question_number, question, answer, points, reference_link) "
+                    "VALUES (:quiz_id, :qn, :question, :answer, :points, :reference_link)"
                 ),
                 {
+                    "quiz_id": quiz_id,
                     "qn": question_number,
                     "question": question,
                     "answer": answer,
@@ -302,6 +346,7 @@ def register(mcp: FastMCP) -> None:
         Args:
             unique_id: The user's unique id from registration.
         """
+        quiz_id = _quiz_id()
         with config.engine.connect() as conn:
             user = conn.execute(
                 text("SELECT id FROM users WHERE unique_id = :uid"),
@@ -311,8 +356,8 @@ def register(mcp: FastMCP) -> None:
                 return {"error": f"No user registered with unique_id '{unique_id}'."}
 
             answered = conn.execute(
-                text("SELECT COUNT(*) AS c FROM attempts WHERE user_id = :uid"),
-                {"uid": user.id},
+                text("SELECT COUNT(*) AS c FROM attempts WHERE user_id = :uid AND quiz_id = :quiz_id"),
+                {"uid": user.id, "quiz_id": quiz_id},
             ).fetchone().c
             total = _total_questions()
             if answered < total:
@@ -322,11 +367,11 @@ def register(mcp: FastMCP) -> None:
                 text("""
                     SELECT a.question_number, a.submitted_answer, a.is_correct, q.answer AS correct_answer
                     FROM attempts a
-                    JOIN questions q ON q.question_number = a.question_number
-                    WHERE a.user_id = :uid AND a.is_correct = 0
+                    JOIN questions q ON q.quiz_id = a.quiz_id AND q.question_number = a.question_number
+                    WHERE a.user_id = :uid AND a.quiz_id = :quiz_id AND a.is_correct = 0
                     ORDER BY a.question_number
                 """),
-                {"uid": user.id},
+                {"uid": user.id, "quiz_id": quiz_id},
             ).fetchall()
 
         return {

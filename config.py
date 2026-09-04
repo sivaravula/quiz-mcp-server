@@ -15,6 +15,10 @@ DB_PORT     = os.environ.get("DB_PORT", "3306")
 # Access code participants must enter before register_user will accept them.
 QUIZ_ACCESS_CODE = os.environ["QUIZ_ACCESS_CODE"]
 
+# quiz_code identifying which row of the shared `quizzes` table this server
+# instance manages. Questions/attempts are all scoped to this quiz's id.
+QUIZ_CODE = os.environ["QUIZ_CODE"]
+
 # Separate, admin-only code required by add_question so random participants
 # can't add/modify quiz content through the public endpoint. Optional: if
 # unset, add_question just reports itself as unconfigured instead of
